@@ -112,11 +112,6 @@ func svc(t networking.ServiceType, mods ...func(*corev1.Service)) *corev1.Servic
 				Protocol:   corev1.ProtocolTCP,
 				Port:       pkgnet.ServiceHTTPPort,
 				TargetPort: intstr.FromInt(networking.BackendHTTPPort),
-			}, {
-				Name:       pkgnet.ServicePortNameHTTPS,
-				Protocol:   corev1.ProtocolTCP,
-				Port:       pkgnet.ServiceHTTPSPort,
-				TargetPort: intstr.FromInt(networking.BackendHTTPSPort),
 			}},
 		},
 	}
@@ -149,11 +144,6 @@ func privateSvcMod(s *corev1.Service) {
 			Protocol:   corev1.ProtocolTCP,
 			Port:       networking.QueueAdminPort,
 			TargetPort: intstr.FromInt(networking.QueueAdminPort),
-		}, {
-			Name:       pkgnet.ServicePortNameHTTP1 + "-istio",
-			Protocol:   corev1.ProtocolTCP,
-			Port:       networking.BackendHTTPPort,
-			TargetPort: intstr.FromInt(networking.BackendHTTPPort),
 		}}...)
 }
 
@@ -165,13 +155,17 @@ func TestMakePublicService(t *testing.T) {
 	}{{
 		name: "HTTP - serve",
 		sks:  sks(nil),
-		want: svc(networking.ServiceTypePublic),
+		want: svc(networking.ServiceTypePublic, func(s *corev1.Service) {
+			s.Annotations = map[string]string{"networking.istio.io/exportTo": ".,istio-system,knative-eventing,knative-sources"}
+		}),
 	}, {
 		name: "HTTP - proxy",
 		sks: sks(func(s *v1alpha1.ServerlessService) {
 			s.Spec.Mode = v1alpha1.SKSOperationModeProxy
 		}),
-		want: svc(networking.ServiceTypePublic),
+		want: svc(networking.ServiceTypePublic, func(s *corev1.Service) {
+			s.Annotations = map[string]string{"networking.istio.io/exportTo": ".,istio-system,knative-eventing,knative-sources"}
+		}),
 	}, {
 		name: "HTTP2 - serve",
 		sks: sks(func(s *v1alpha1.ServerlessService) {
@@ -187,13 +181,8 @@ func TestMakePublicService(t *testing.T) {
 				AppProtocol: &pkgnet.AppProtocolH2C,
 				Port:        pkgnet.ServiceHTTP2Port,
 				TargetPort:  intstr.FromInt(networking.BackendHTTP2Port),
-			}, {
-				Name:       pkgnet.ServicePortNameHTTPS,
-				Protocol:   corev1.ProtocolTCP,
-				Port:       pkgnet.ServiceHTTPSPort,
-				TargetPort: intstr.FromInt(networking.BackendHTTPSPort),
 			}}
-			s.Annotations = map[string]string{"cherub": "rock"}
+			s.Annotations = map[string]string{"cherub": "rock", "networking.istio.io/exportTo": ".,istio-system,knative-eventing,knative-sources"}
 			s.OwnerReferences[0].UID = "1988"
 		}),
 	}, {
@@ -208,12 +197,8 @@ func TestMakePublicService(t *testing.T) {
 				AppProtocol: &pkgnet.AppProtocolH2C,
 				Port:        pkgnet.ServiceHTTP2Port,
 				TargetPort:  intstr.FromInt(networking.BackendHTTP2Port),
-			}, {
-				Name:       pkgnet.ServicePortNameHTTPS,
-				Protocol:   corev1.ProtocolTCP,
-				Port:       pkgnet.ServiceHTTPSPort,
-				TargetPort: intstr.FromInt(networking.BackendHTTPSPort),
 			}}
+			s.Annotations = map[string]string{"networking.istio.io/exportTo": ".,istio-system,knative-eventing,knative-sources"}
 		}),
 	}, {
 		name: "HTTP2 - proxy",
@@ -229,12 +214,8 @@ func TestMakePublicService(t *testing.T) {
 				AppProtocol: &pkgnet.AppProtocolH2C,
 				Port:        pkgnet.ServiceHTTP2Port,
 				TargetPort:  intstr.FromInt(networking.BackendHTTP2Port),
-			}, {
-				Name:       pkgnet.ServicePortNameHTTPS,
-				Protocol:   corev1.ProtocolTCP,
-				Port:       pkgnet.ServiceHTTPSPort,
-				TargetPort: intstr.FromInt(networking.BackendHTTPSPort),
 			}}
+			s.Annotations = map[string]string{"networking.istio.io/exportTo": ".,istio-system,knative-eventing,knative-sources"}
 			s.Labels["infinite"] = "sadness"
 		}),
 	}}
@@ -448,7 +429,9 @@ func TestMakePrivateService(t *testing.T) {
 		selector: map[string]string{
 			"app": "sadness",
 		},
-		want: svc(networking.ServiceTypePrivate, privateSvcMod),
+		want: svc(networking.ServiceTypePrivate, privateSvcMod, func(s *corev1.Service) {
+			s.Annotations = map[string]string{"networking.istio.io/exportTo": "knative-serving"}
+		}),
 	}, {
 		name: "HTTP2 and long",
 		sks: sks(func(s *v1alpha1.ServerlessService) {
@@ -469,7 +452,7 @@ func TestMakePrivateService(t *testing.T) {
 			s.Spec.Selector = map[string]string{"app": "today"}
 			s.Labels["ava"] = "adore"
 			s.Labels[networking.SKSLabelKey] = "dream-tonight-cherub-rock-mayonnaise-hummer-disarm-rocket-soma-quiet"
-			s.Annotations = map[string]string{"cherub": "rock"}
+			s.Annotations = map[string]string{"cherub": "rock", "networking.istio.io/exportTo": "knative-serving"}
 		}, privateSvcMod, func(s *corev1.Service) {
 			// And now patch port to be http2.
 			s.Spec.Ports[0] = corev1.ServicePort{
@@ -478,12 +461,6 @@ func TestMakePrivateService(t *testing.T) {
 				AppProtocol: &pkgnet.AppProtocolH2C,
 				Port:        pkgnet.ServiceHTTPPort,
 				TargetPort:  intstr.FromInt(networking.BackendHTTP2Port),
-			}
-			s.Spec.Ports[5] = corev1.ServicePort{
-				Name:       pkgnet.ServicePortNameH2C + "-istio",
-				Protocol:   corev1.ProtocolTCP,
-				Port:       networking.BackendHTTP2Port,
-				TargetPort: intstr.FromInt(networking.BackendHTTP2Port),
 			}
 		}),
 	}}
