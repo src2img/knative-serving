@@ -43,7 +43,6 @@ func (c *Reconciler) createDeployment(ctx context.Context, rev *v1.Revision) (*a
 	if err != nil {
 		return nil, fmt.Errorf("failed to make deployment: %w", err)
 	}
-
 	return c.kubeclient.AppsV1().Deployments(deployment.Namespace).Create(ctx, deployment, metav1.CreateOptions{})
 }
 
@@ -56,6 +55,23 @@ func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revis
 		return nil, fmt.Errorf("failed to update deployment: %w", err)
 	}
 
+	// Carry over template-level labels and annotations (e.g., kubectl.kubernetes.io/restartedAt from rollout restart).
+	deployment.Spec.Template.Labels = mergeMetadata(deployment.Spec.Template.Labels, have.Spec.Template.Labels)
+	deployment.Spec.Template.Annotations = mergeMetadata(deployment.Spec.Template.Annotations, have.Spec.Template.Annotations)
+
+	// Carry over new labels and annotations at deployment level.
+	desiredLabels := mergeMetadata(deployment.Labels, have.Labels)
+	desiredAnnotations := mergeMetadata(deployment.Annotations, have.Annotations)
+
+	// Check if either the hash of our own fields changed or if any labels/annotations we own have changed
+	// externally set labels/annotations will always be equal here since they are carried-over
+	if equality.Semantic.DeepEqual(desiredLabels, have.Labels) &&
+		equality.Semantic.DeepEqual(desiredAnnotations, have.Annotations) &&
+		deployment.Annotations["serving.knative.dev/deployment-spec-hash"] == have.Annotations["serving.knative.dev/deployment-spec-hash"] {
+		logger.Infof("Not updating deployment %s/%s because of an empty diff\n", deployment.Namespace, deployment.Name)
+		return have, nil
+	}
+
 	// Preserve the current scale of the Deployment.
 	deployment.Spec.Replicas = have.Spec.Replicas
 
@@ -63,22 +79,14 @@ func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revis
 	// TODO(dprotaso): determine other immutable properties.
 	deployment.Spec.Selector = have.Spec.Selector
 
-	// If the spec we want is the spec we have, then we're good.
-	if equality.Semantic.DeepEqual(have.Spec, deployment.Spec) {
-		return have, nil
-	}
-
 	// Otherwise attempt an update (with ONLY the spec changes).
 	desiredDeployment := have.DeepCopy()
 	desiredDeployment.Spec = deployment.Spec
+	desiredDeployment.Labels = desiredLabels
+	desiredDeployment.Annotations = desiredAnnotations
+	desiredDeployment.Annotations["serving.knative.dev/deployment-spec-hash"] = deployment.Annotations["serving.knative.dev/deployment-spec-hash"]
 
-	// Carry over new labels and annotations at deployment level.
-	desiredDeployment.Labels = mergeMetadata(deployment.Labels, have.Labels)
-	desiredDeployment.Annotations = mergeMetadata(deployment.Annotations, have.Annotations)
-
-	// Carry over template-level labels and annotations (e.g., kubectl.kubernetes.io/restartedAt from rollout restart).
-	desiredDeployment.Spec.Template.Labels = mergeMetadata(deployment.Spec.Template.Labels, have.Spec.Template.Labels)
-	desiredDeployment.Spec.Template.Annotations = mergeMetadata(deployment.Spec.Template.Annotations, have.Spec.Template.Annotations)
+	logger.Infof("Updating deployment %s/%s\n", deployment.Namespace, deployment.Name)
 
 	d, err := c.kubeclient.AppsV1().Deployments(deployment.Namespace).Update(ctx, desiredDeployment, metav1.UpdateOptions{})
 	if err != nil {
