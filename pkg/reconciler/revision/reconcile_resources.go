@@ -19,6 +19,10 @@ package revision
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"time"
 
 	"go.uber.org/zap"
 	"knative.dev/pkg/tracker"
@@ -32,6 +36,7 @@ import (
 
 	networkingApi "knative.dev/networking/pkg/apis/networking"
 	"knative.dev/networking/pkg/certificates"
+	"knative.dev/pkg/controller"
 	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/kmp"
 	"knative.dev/pkg/logging"
@@ -42,6 +47,21 @@ import (
 	"knative.dev/serving/pkg/reconciler/revision/resources"
 	resourcenames "knative.dev/serving/pkg/reconciler/revision/resources/names"
 )
+
+var (
+	deploymentUpdatesWaitTime time.Duration
+)
+
+func init() {
+	var err error
+	if value, found := os.LookupEnv("DEPLOYMENT_UPDATES_WAIT_TIME_SECONDS"); found {
+		var deploymentUpdatesWaitTimeSeconds int
+		if deploymentUpdatesWaitTimeSeconds, err = strconv.Atoi(value); err != nil {
+			log.Fatalf("Non-numeric value for DEPLOYMENT_UPDATES_WAIT_TIME_SECONDS: %s", value)
+		}
+		deploymentUpdatesWaitTime = time.Duration(deploymentUpdatesWaitTimeSeconds) * time.Second
+	}
+}
 
 func (c *Reconciler) reconcileDeployment(ctx context.Context, rev *v1.Revision) error {
 	ns := rev.Namespace
@@ -67,9 +87,14 @@ func (c *Reconciler) reconcileDeployment(ctx context.Context, rev *v1.Revision) 
 	}
 
 	// The deployment exists, but make sure that it has the shape that we expect.
-	deployment, err = c.checkAndUpdateDeployment(ctx, rev, deployment)
+	var requeue bool
+	deployment, requeue, err = c.checkAndUpdateDeployment(ctx, rev, deployment)
 	if err != nil {
 		return fmt.Errorf("failed to update deployment %q: %w", deploymentName, err)
+	}
+
+	if requeue {
+		return controller.NewRequeueAfter(deploymentUpdatesWaitTime)
 	}
 
 	rev.Status.PropagateDeploymentStatus(&deployment.Status)
