@@ -215,13 +215,19 @@ func isKProbe(r *http.Request) bool {
 
 // serveKProbe serve KProbe requests.
 func serveKProbe(w http.ResponseWriter, r *http.Request) {
+	ph := r.Header.Get(network.HashPreferredHeaderName)
 	hh := r.Header.Get(network.HashHeaderName)
-	if hh == "" {
+	if hh == "" && ph == "" {
 		http.Error(w,
-			fmt.Sprintf("a probe request must contain a non-empty %q header", network.HashHeaderName),
+			fmt.Sprintf("a probe request must contain a non-empty %q or %q header", network.HashPreferredHeaderName, network.HashHeaderName),
 			http.StatusBadRequest)
 		return
 	}
-	w.Header().Set(network.HashHeaderName, hh)
+	if ph != "" {
+		w.Header().Set(network.HashPreferredHeaderName, ph)
+	}
+	if hh != "" {
+		w.Header().Set(network.HashHeaderName, hh)
+	}
 	w.WriteHeader(http.StatusOK)
 }
