@@ -51,6 +51,10 @@ const (
 	// uses to find out which version of the networking config is deployed.
 	HashHeaderName = "K-Network-Hash"
 
+	// HashPreferredHeaderName is the name of an internal header that the Ingress controller
+	// uses for probes that redirect.
+	HashPreferredHeaderName = "K-Network-Preferred-Hash"
+
 	// KubeProbeUAPrefix is the prefix for the User-Agent header.
 	// Since K8s 1.8, prober requests have
 	//   User-Agent = "kube-probe/{major-version}.{minor-version}".
