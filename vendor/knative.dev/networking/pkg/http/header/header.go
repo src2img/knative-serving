@@ -21,15 +21,15 @@ import (
 	"strings"
 )
 
-// HashKey & Values
+// HashKey
 const (
 	// HashKey is the name of an internal header that Ingress controller
 	// uses to find out which version of the networking config is deployed.
 	HashKey = "K-Network-Hash"
 
-	// HashValueOverride is the value that must appear in the HashHeaderKey
-	// header in order for our network hash to be injected.
-	HashValueOverride = "override"
+	// PreferredHashKey is the name of an internal header that the Ingress controller
+	// uses for probes that redirect.
+	PreferredHashKey = "K-Network-Preferred-Hash"
 )
 
 // ProbeKey & Values
@@ -110,6 +110,10 @@ const (
 
 // KnativeProbeHeader returns the value for key ProbeHeaderName in request headers.
 func GetKnativeProbeValue(r *http.Request) string {
+	value := r.Header.Get(PreferredHashKey)
+	if value != "" {
+		return value
+	}
 	return r.Header.Get(ProbeKey)
 }
 

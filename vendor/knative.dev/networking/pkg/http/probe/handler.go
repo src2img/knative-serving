@@ -36,16 +36,24 @@ func NewHandler(next http.Handler) http.Handler {
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ph := r.Header.Get(header.ProbeKey); ph != header.ProbeValue {
 		r.Header.Del(header.HashKey)
+		r.Header.Del(header.PreferredHashKey)
 		h.next.ServeHTTP(w, r)
 		return
 	}
 
 	hh := r.Header.Get(header.HashKey)
-	if hh == "" {
-		http.Error(w, fmt.Sprintf("a probe request must contain a non-empty %q header", header.HashKey), http.StatusBadRequest)
+	ph := r.Header.Get(header.PreferredHashKey)
+
+	if hh == "" && ph == "" {
+		http.Error(w, fmt.Sprintf("a probe request must contain a non-empty %q or %q header", header.HashKey, header.PreferredHashKey), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set(header.HashKey, hh)
+	if hh != "" {
+		w.Header().Set(header.HashKey, hh)
+	}
+	if ph != "" {
+		w.Header().Set(header.PreferredHashKey, ph)
+	}
 	w.WriteHeader(http.StatusOK)
 }
