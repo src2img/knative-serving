@@ -41,12 +41,6 @@ const (
 	// Deprecated: use knative.dev/networking/pkg/http/header.HashKey
 	HashHeaderName = header.HashKey
 
-	// HashHeaderValue is the value that must appear in the HashHeaderName
-	// header in order for our network hash to be injected.
-	//
-	// Deprecated: use knative.dev/networking/pkg/http/header.HashValueOverride
-	HashHeaderValue = header.HashValueOverride
-
 	// OriginalHostHeader is used to avoid Istio host based routing rules
 	// in Activator.
 	// The header contains the original Host value that can be rewritten
