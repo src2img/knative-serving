@@ -20,6 +20,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"log"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -376,6 +378,15 @@ func MakeDeployment(rev *v1.Revision, cfg *config.Config) (*appsv1.Deployment, e
 		progressDeadline = int32(pd.Seconds())
 	}
 
+	var revisionHistoryLimit *int32
+	if value, found := os.LookupEnv("DEPLOYMENT_REVISION_HISTORY_LIMIT"); found {
+		var asInt int64
+		if asInt, err = strconv.ParseInt(value, 10, 32); err != nil {
+			log.Fatalf("Non-numeric value for DEPLOYMENT_REVISION_HISTORY_LIMIT: %s", value)
+		}
+		revisionHistoryLimit = ptr.Int32(int32(asInt)) // #nosec G115: ParseInt was called with bit size 32, so this is safe
+	}
+
 	labels := makeLabels(rev)
 	anns := makeAnnotations(rev)
 
@@ -394,6 +405,7 @@ func MakeDeployment(rev *v1.Revision, cfg *config.Config) (*appsv1.Deployment, e
 			Replicas:                ptr.Int32(replicaCount),
 			Selector:                makeSelector(rev),
 			ProgressDeadlineSeconds: ptr.Int32(progressDeadline),
+			RevisionHistoryLimit:    revisionHistoryLimit,
 			Strategy: appsv1.DeploymentStrategy{
 				Type: appsv1.RollingUpdateDeploymentStrategyType,
 				RollingUpdate: &appsv1.RollingUpdateDeployment{
