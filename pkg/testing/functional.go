@@ -214,6 +214,15 @@ func WithObservedGeneration(gen int64) PodAutoscalerOption {
 	}
 }
 
+// WithActualScale returns a PodAutoScalerOption which sets
+// the Status.ActualScale field to the given scale.
+func WithActualScale(scale int32) PodAutoscalerOption {
+	return func(pa *autoscalingv1alpha1.PodAutoscaler) {
+		scaleP := scale
+		pa.Status.ActualScale = &scaleP
+	}
+}
+
 // WithMetricOwnersRemoved clears the owner references of this PodAutoscaler.
 func WithMetricOwnersRemoved(m *autoscalingv1alpha1.Metric) {
 	m.OwnerReferences = nil

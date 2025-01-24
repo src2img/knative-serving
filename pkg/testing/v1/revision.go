@@ -126,6 +126,15 @@ func WithImagePullSecrets(secretName string) RevisionOption {
 	}
 }
 
+// WithImagePullSecrets updates the revision status actual scale to
+// the provided scale
+func WithRevActualScale(scale int32) RevisionOption {
+	return func(rev *v1.Revision) {
+		scaleP := scale
+		rev.Status.ActualReplicas = &scaleP
+	}
+}
+
 // MarkActive calls .Status.MarkActive on the Revision.
 func MarkActive(r *v1.Revision) {
 	r.Status.MarkActiveTrue()
