@@ -23,6 +23,7 @@ import (
 	"net/http/httputil"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/trace"
@@ -142,7 +143,9 @@ func (a *activationHandler) proxyRequest(revID types.NamespacedName, w http.Resp
 		pkghandler.Error(a.logger.With(zap.String(logkey.Key, revID.String())))(w, req, err)
 	}
 
+	start := time.Now()
 	proxy.ServeHTTP(w, r)
+	a.logger.Infof("TIMING Proxied request %s for revision %s/%s in %s", r.URL.String(), revID.Namespace, revID.Name, time.Since(start).String())
 }
 
 // useSecurePort replaces the default port with HTTPS port (8112).
