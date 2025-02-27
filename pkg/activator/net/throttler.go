@@ -22,6 +22,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -542,6 +543,7 @@ func (t *Throttler) getOrCreateRevisionThrottler(revID types.NamespacedName) (*r
 	defer t.revisionThrottlersMutex.Unlock()
 	revThrottler, ok = t.revisionThrottlers[revID]
 	if !ok {
+		start := time.Now()
 		rev, err := t.revisionLister.Revisions(revID.Namespace).Get(revID.Name)
 		if err != nil {
 			return nil, err
@@ -554,6 +556,7 @@ func (t *Throttler) getOrCreateRevisionThrottler(revID types.NamespacedName) (*r
 			t.logger,
 		)
 		t.revisionThrottlers[revID] = revThrottler
+		t.logger.Infof("TIMING Configured new revision throttler %s/%s in %s", revID.Namespace, revID.Name, time.Since(start).String())
 	}
 	return revThrottler, nil
 }
