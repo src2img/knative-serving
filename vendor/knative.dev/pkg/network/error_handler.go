@@ -37,6 +37,11 @@ func ErrorHandler(logger *zap.SugaredLogger) func(http.ResponseWriter, *http.Req
 		}
 		ss := readSockStat(logger)
 		logger.Errorw("error reverse proxying request; sockstat: "+ss, zap.Error(err))
+		// do not write anything to w if context is already cancelled
+		if err := req.Context().Err(); err == context.Canceled {
+			logger.Infof("Context already cancelled for %s", req.URL.String())
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 	}
 }
