@@ -17,6 +17,7 @@ limitations under the License.
 package handler
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -233,9 +234,8 @@ func testTimeoutScenario(t *testing.T, scenarios []timeoutHandlerTestScenario) {
 				}
 			}()
 
-			reqMux.Lock() // Will cause an inner 'Lock' to block. ServeHTTP will exit early if the call times out.
+			// will block until all handlers are done. Handlers will be exit when context is cancelled mimicking actual go net/http behavior
 			handler.ServeHTTP(rr, req)
-			reqMux.Unlock() // Allows the inner 'Lock' to go through to complete potential writes.
 
 			if status := rr.Code; status != scenario.wantStatus {
 				t.Errorf("Handler returned wrong status code: got %v want %v", status, scenario.wantStatus)
@@ -279,8 +279,7 @@ func TestTimeToResponseStartTimeoutHandler(t *testing.T) {
 		handler: func(c *clocktest.FakeClock, mux *sync.Mutex, writeErrors chan error) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				c.Step(immediateTimeout)
-				mux.Lock()
-				defer mux.Unlock()
+				waitUntilCancelled(r)
 				_, werr := w.Write([]byte("hi"))
 				writeErrors <- werr
 			})
@@ -308,8 +307,7 @@ func TestTimeToResponseStartTimeoutHandler(t *testing.T) {
 		handler: func(c *clocktest.FakeClock, mux *sync.Mutex, _ chan error) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				c.Step(immediateTimeout)
-				mux.Lock()
-				defer mux.Unlock()
+				waitUntilCancelled(r)
 				panic(http.ErrAbortHandler)
 			})
 		},
@@ -425,8 +423,7 @@ func TestIdleTimeoutHandler(t *testing.T) {
 		handler: func(c *clocktest.FakeClock, mux *sync.Mutex, writeErrors chan error) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				c.Step(immediateIdleTimeout)
-				mux.Lock()
-				defer mux.Unlock()
+				waitUntilCancelled(r)
 				_, werr := w.Write([]byte("hi"))
 				writeErrors <- werr
 			})
@@ -456,8 +453,7 @@ func TestIdleTimeoutHandler(t *testing.T) {
 		handler: func(c *clocktest.FakeClock, mux *sync.Mutex, _ chan error) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				c.Step(immediateIdleTimeout)
-				mux.Lock()
-				defer mux.Unlock()
+				waitUntilCancelled(r)
 				panic(http.ErrAbortHandler)
 			})
 		},
@@ -494,8 +490,7 @@ func TestIdleTimeoutHandler(t *testing.T) {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte("foo"))
 				c.Step(shortIdleTimeout + 1*time.Millisecond)
-				mux.Lock()
-				defer mux.Unlock()
+				waitUntilCancelled(r)
 				panic(http.ErrAbortHandler)
 			})
 		},
@@ -555,8 +550,7 @@ func TestTimeoutHandler(t *testing.T) {
 		handler: func(c *clocktest.FakeClock, mux *sync.Mutex, _ chan error) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				c.Step(longTimeout)
-				mux.Lock()
-				defer mux.Unlock()
+				waitUntilCancelled(r)
 				w.Write([]byte("hi"))
 			})
 		},
@@ -582,8 +576,7 @@ func TestTimeoutHandler(t *testing.T) {
 		handler: func(c *clocktest.FakeClock, mux *sync.Mutex, _ chan error) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				c.Step(immediateTimeout)
-				mux.Lock()
-				defer mux.Unlock()
+				waitUntilCancelled(r)
 				panic(http.ErrAbortHandler)
 			})
 		},
@@ -627,5 +620,14 @@ func BenchmarkTimeoutHandler(b *testing.B) {
 func StaticTimeoutFunc(timeout time.Duration, requestStart time.Duration, idle time.Duration) TimeoutFunc {
 	return func(req *http.Request) (time.Duration, time.Duration, time.Duration) {
 		return timeout, requestStart, idle
+	}
+}
+
+func waitUntilCancelled(r *http.Request) {
+	for {
+		if err := r.Context().Err(); err == context.Canceled {
+			return
+		}
+		time.Sleep(1 * time.Millisecond)
 	}
 }

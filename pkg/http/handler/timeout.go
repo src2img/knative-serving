@@ -92,6 +92,7 @@ func (h *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// done is closed when h.handler.ServeHTTP completes and contains
 	// the panic from h.handler.ServeHTTP if h.handler.ServeHTTP panics.
 	done := make(chan interface{})
+	var wg sync.WaitGroup
 	tw := &timeoutWriter{w: w, clock: h.clock}
 
 	var responseStartTimeout clock.Timer
@@ -107,8 +108,10 @@ func (h *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		responseStartTimeoutCh = responseStartTimeout.C()
 	}
 
+	wg.Add(1)
 	go func() {
 		defer func() {
+			wg.Done()
 			defer close(done)
 			if p := recover(); p != nil {
 				done <- p
@@ -118,23 +121,26 @@ func (h *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handler.ServeHTTP(tw, r.WithContext(ctx))
 	}()
 
+OUTER_LOOP:
 	for {
 		select {
 		case p, ok := <-done:
 			if ok {
 				panic(p)
 			}
-			return
+			break OUTER_LOOP
 		case <-timeout.C():
 			timeoutDrained = true
 			if tw.tryTimeoutAndWriteError(h.body) {
-				return
+				cancel()
+				break OUTER_LOOP
 			}
 		case now := <-idleTimeoutCh:
 			timedOut, timeToNextTimeout := tw.tryIdleTimeoutAndWriteError(now, revIdleTimeout, h.body)
 			if timedOut {
 				idleTimeoutDrained = true
-				return
+				cancel()
+				break OUTER_LOOP
 			}
 			idleTimeout.Reset(timeToNextTimeout)
 		case <-responseStartTimeoutCh:
@@ -143,10 +149,12 @@ func (h *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			responseStartTimeoutDrained = true
 			timedOut := tw.tryResponseStartTimeoutAndWriteError(h.body)
 			if timedOut {
-				return
+				cancel()
+				break OUTER_LOOP
 			}
 		}
 	}
+	wg.Wait()
 }
 
 // timeoutWriter is a wrapper around an http.ResponseWriter. It guards
