@@ -17,12 +17,19 @@ limitations under the License.
 package main
 
 import (
+	"math"
 	"os"
+	"time"
 
 	"knative.dev/serving/pkg/queue/sharedmain"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "sleep" {
+		time.Sleep(time.Duration(math.MaxInt64))
+		return
+	}
+
 	if sharedmain.Main() != nil {
 		os.Exit(1)
 	}
