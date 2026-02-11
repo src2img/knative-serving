@@ -101,7 +101,7 @@ func TestContextHandlerError(t *testing.T) {
 	req.Header.Set(activator.RevisionHeaderName, "fooname")
 	handler.ServeHTTP(resp, req)
 
-	if got, want := resp.Code, http.StatusNotFound; got != want {
+	if got, want := resp.Code, http.StatusServiceUnavailable; got != want {
 		t.Errorf("StatusCode = %d, want %d", got, want)
 	}
 
