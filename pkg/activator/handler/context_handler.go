@@ -85,7 +85,8 @@ func (h *contextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func sendError(err error, w http.ResponseWriter) {
 	msg := fmt.Sprint("Error getting active endpoint: ", err)
 	if k8serrors.IsNotFound(err) {
-		http.Error(w, msg, http.StatusNotFound)
+		// return a 503 here to force a retry since a 404 from the revision lister is very likely temporary error
+		http.Error(w, msg, http.StatusServiceUnavailable)
 		return
 	}
 	http.Error(w, msg, http.StatusInternalServerError)
