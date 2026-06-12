@@ -52,7 +52,7 @@ func TestHandlerBreakerQueueFull(t *testing.T) {
 		<-resp
 	})
 	breaker := NewBreaker(BreakerParams{
-		QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 1,
+		Concurrency: 1, MaxQueueDepth: 2, InitialCapacity: 1,
 	})
 	stats := netstats.NewRequestStats(time.Now())
 	h := ProxyHandler(tracer, breaker, stats, blockHandler)
@@ -70,7 +70,7 @@ func TestHandlerBreakerQueueFull(t *testing.T) {
 	// One of the three requests fails and it should be the first we see since the others
 	// are still held by the resp channel.
 	failure := <-resps
-	if got, want := failure.Code, http.StatusServiceUnavailable; got != want {
+	if got, want := failure.Code, http.StatusTooManyRequests; got != want {
 		t.Errorf("Code = %d, want: %d", got, want)
 	}
 	const want = "pending request queue full"
@@ -104,7 +104,7 @@ func TestHandlerBreakerTimeout(t *testing.T) {
 		<-resp
 	})
 	breaker := NewBreaker(BreakerParams{
-		QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 1,
+		Concurrency: 1, MaxQueueDepth: 3, InitialCapacity: 1, RateLimitingFactor: 3,
 	})
 	stats := netstats.NewRequestStats(time.Now())
 	h := ProxyHandler(tracer, breaker, stats, blockHandler)
@@ -132,7 +132,7 @@ func TestHandlerBreakerTimeout(t *testing.T) {
 }
 
 func TestHandlerReqEvent(t *testing.T) {
-	params := BreakerParams{QueueDepth: 10, MaxConcurrency: 10, InitialCapacity: 10}
+	params := BreakerParams{Concurrency: 10, MaxQueueDepth: 10, InitialCapacity: 10, RateLimitingFactor: 3}
 	breaker := NewBreaker(params)
 	for _, br := range []*Breaker{breaker, nil} {
 		t.Run(fmt.Sprint("Breaker?=", br == nil), func(t *testing.T) {
@@ -231,7 +231,7 @@ func TestIgnoreProbe(t *testing.T) {
 	proxy := httputil.NewSingleHostReverseProxy(serverURL)
 
 	// Ensure no more than 1 request can be queued. So we'll send 3.
-	breaker := NewBreaker(BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 1})
+	breaker := NewBreaker(BreakerParams{Concurrency: 1, MaxQueueDepth: 1, InitialCapacity: 1, RateLimitingFactor: 3})
 	stats := netstats.NewRequestStats(time.Now())
 	h := ProxyHandler(tracer, breaker, stats, proxy)
 
@@ -262,7 +262,7 @@ func BenchmarkProxyHandler(b *testing.B) {
 		reportPeriod time.Duration
 	}{{
 		label:        "breaker-10-no-reports",
-		breaker:      NewBreaker(BreakerParams{QueueDepth: 10, MaxConcurrency: 10, InitialCapacity: 10}),
+		breaker:      NewBreaker(BreakerParams{Concurrency: 10, MaxQueueDepth: 10, InitialCapacity: 10, RateLimitingFactor: 3}),
 		reportPeriod: time.Hour,
 	}, {
 		label:        "breaker-infinite-no-reports",
@@ -270,7 +270,7 @@ func BenchmarkProxyHandler(b *testing.B) {
 		reportPeriod: time.Hour,
 	}, {
 		label:        "breaker-10-many-reports",
-		breaker:      NewBreaker(BreakerParams{QueueDepth: 10, MaxConcurrency: 10, InitialCapacity: 10}),
+		breaker:      NewBreaker(BreakerParams{Concurrency: 10, MaxQueueDepth: 10, InitialCapacity: 10, RateLimitingFactor: 3}),
 		reportPeriod: time.Microsecond,
 	}, {
 		label:        "breaker-infinite-many-reports",

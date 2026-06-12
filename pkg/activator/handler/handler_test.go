@@ -95,7 +95,7 @@ func TestActivationHandler(t *testing.T) {
 	}, {
 		name:      "overflow",
 		wantBody:  "pending request queue full\n",
-		wantCode:  http.StatusServiceUnavailable,
+		wantCode:  http.StatusTooManyRequests,
 		throttler: fakeThrottler{err: queue.ErrRequestQueueFull},
 	}}
 	for _, test := range tests {

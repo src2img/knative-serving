@@ -72,7 +72,9 @@ func ProxyHandler(
 			next.ServeHTTP(w, r)
 		}); err != nil {
 			waitSpan.End()
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrRequestQueueFull) {
+			if errors.Is(err, ErrRequestQueueFull) {
+				http.Error(w, err.Error(), http.StatusTooManyRequests)
+			} else if errors.Is(err, context.DeadlineExceeded) {
 				http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			} else {
 				// This line is most likely untestable :-).
