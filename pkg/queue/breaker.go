@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 )
 
@@ -33,9 +34,11 @@ const MaxBreakerCapacity = math.MaxInt32
 
 // BreakerParams defines the parameters of the breaker.
 type BreakerParams struct {
-	QueueDepth      int
-	MaxConcurrency  int
-	InitialCapacity int
+	Concurrency        int
+	MinQueueDepth      int
+	MaxQueueDepth      int
+	InitialCapacity    int
+	RateLimitingFactor float64
 }
 
 // Breaker is a component that enforces a concurrency limit on the
@@ -43,9 +46,13 @@ type BreakerParams struct {
 // executions in excess of the concurrency limit. Function call attempts
 // beyond the limit of the queue are failed immediately.
 type Breaker struct {
-	inFlight   atomic.Int64
-	totalSlots int64
-	sem        *semaphore
+	inFlight           atomic.Int64
+	totalSlots         int64
+	slotsMutex         sync.RWMutex
+	rateLimitingFactor float64
+	minQueueDepth      int
+	maxQueueDepth      int
+	sem                *semaphore
 
 	// release is the callback function returned to callers by Reserve to
 	// allow the reservation made by Reserve to be released.
@@ -55,19 +62,29 @@ type Breaker struct {
 // NewBreaker creates a Breaker with the desired queue depth,
 // concurrency limit and initial capacity.
 func NewBreaker(params BreakerParams) *Breaker {
-	if params.QueueDepth <= 0 {
-		panic(fmt.Sprintf("Queue depth must be greater than 0. Got %v.", params.QueueDepth))
+	if params.Concurrency <= 0 {
+		panic(fmt.Sprintf("Concurrency must be greater than 0. Got %v.", params.Concurrency))
 	}
-	if params.MaxConcurrency < 0 {
-		panic(fmt.Sprintf("Max concurrency must be 0 or greater. Got %v.", params.MaxConcurrency))
+	if params.RateLimitingFactor < 0 {
+		panic(fmt.Sprintf("Rate limiting factor must be 0 or greater. Got %v.", params.RateLimitingFactor))
 	}
-	if params.InitialCapacity < 0 || params.InitialCapacity > params.MaxConcurrency {
+	if params.MinQueueDepth < 0 {
+		panic(fmt.Sprintf("Min queue depth must be 0 or greater. Got %v.", params.MinQueueDepth))
+	}
+	if params.MaxQueueDepth < 0 {
+		panic(fmt.Sprintf("Max queue depth must be 0 or greater. Got %v.", params.MaxQueueDepth))
+	}
+	if params.InitialCapacity < 0 || params.InitialCapacity > params.MaxQueueDepth {
 		panic(fmt.Sprintf("Initial capacity must be between 0 and max concurrency. Got %v.", params.InitialCapacity))
 	}
 
 	b := &Breaker{
-		totalSlots: int64(params.QueueDepth + params.MaxConcurrency),
-		sem:        newSemaphore(params.MaxConcurrency, params.InitialCapacity),
+		rateLimitingFactor: params.RateLimitingFactor,
+		minQueueDepth:      params.MinQueueDepth,
+		maxQueueDepth:      params.MaxQueueDepth,
+		totalSlots:         calculateQueueDepth(params.Concurrency, int64(params.MinQueueDepth), int64(params.MaxQueueDepth), params.RateLimitingFactor),
+		slotsMutex:         sync.RWMutex{},
+		sem:                newSemaphore(params.MaxQueueDepth, params.InitialCapacity),
 	}
 
 	// Allocating the closure returned by Reserve here avoids an allocation in Reserve.
@@ -97,6 +114,8 @@ func (b *Breaker) tryAcquirePending() bool {
 	// anymore.
 	for {
 		cur := b.inFlight.Load()
+		b.slotsMutex.RLock()
+		defer b.slotsMutex.RUnlock()
 		if cur == b.totalSlots {
 			return false
 		}
@@ -160,8 +179,11 @@ func (b *Breaker) InFlight() int {
 }
 
 // UpdateConcurrency updates the maximum number of in-flight requests.
-func (b *Breaker) UpdateConcurrency(size int) {
-	b.sem.updateCapacity(size)
+func (b *Breaker) UpdateConcurrency(semaphoreSize int) {
+	b.slotsMutex.Lock()
+	defer b.slotsMutex.Unlock()
+	b.totalSlots = calculateQueueDepth(semaphoreSize, int64(b.minQueueDepth), int64(b.maxQueueDepth), b.rateLimitingFactor)
+	b.sem.updateCapacity(semaphoreSize)
 }
 
 // Capacity returns the number of allowed in-flight requests on this breaker.
@@ -175,6 +197,17 @@ func newSemaphore(maxCapacity, initialCapacity int) *semaphore {
 	sem := &semaphore{queue: queue}
 	sem.updateCapacity(initialCapacity)
 	return sem
+}
+
+func calculateQueueDepth(concurrency int, minQueueDepth, maxQueueDepth int64, rateLimitingFactor float64) int64 {
+	// num_concurrency requests are let through the breaker, so we must allow num_concurrency * (rate_limit + 1) in the queue
+	// since inflight requests are part of the queue
+	// all values non-negative so casting is ok here
+	maxAllowedConcurrency := int64(float64(concurrency) * (rateLimitingFactor + 1))
+	if rateLimitingFactor == 0.0 { // no rate limiting; var is exactly set
+		maxAllowedConcurrency = maxQueueDepth
+	}
+	return int64(max(minQueueDepth, min(maxAllowedConcurrency, maxQueueDepth)))
 }
 
 // semaphore is an implementation of a semaphore based on packed integers and a channel.
@@ -261,8 +294,8 @@ func (s *semaphore) release() {
 }
 
 // updateCapacity updates the capacity of the semaphore to the desired size.
-func (s *semaphore) updateCapacity(size int) {
-	s64 := uint64(size) //nolint:gosec // TODO(dprotaso) capacity should be uint
+func (s *semaphore) updateCapacity(semaphoreSize int) {
+	s64 := uint64(semaphoreSize) //nolint:gosec // TODO(dprotaso) capacity should be uint
 	for {
 		old := s.state.Load()
 		capacity, in := unpack(old)

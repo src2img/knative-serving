@@ -124,7 +124,10 @@ func (a *activationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		a.logger.Errorw("Throttler try error", zap.String(logkey.Key, revID.String()), zap.Error(err))
 
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, queue.ErrRequestQueueFull) {
+		if errors.Is(err, queue.ErrRequestQueueFull) {
+			a.logger.Infof("Rate-limited %s/%s", revID.Namespace, revID.Name)
+			http.Error(w, err.Error(), http.StatusTooManyRequests)
+		} else if errors.Is(err, context.DeadlineExceeded) {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)

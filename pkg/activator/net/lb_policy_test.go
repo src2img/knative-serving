@@ -126,9 +126,10 @@ func TestFirstAvailable(t *testing.T) {
 		podTrackers := []*podTracker{{
 			dest: "this-is-nowhere",
 			b: queue.NewBreaker(queue.BreakerParams{
-				QueueDepth:      1,
-				MaxConcurrency:  1,
-				InitialCapacity: 1,
+				Concurrency:        1,
+				MaxQueueDepth:      1,
+				InitialCapacity:    1,
+				RateLimitingFactor: rateLimitingFactor,
 			}),
 		}}
 
@@ -152,16 +153,18 @@ func TestFirstAvailable(t *testing.T) {
 		podTrackers := []*podTracker{{
 			dest: "down-by-the-river",
 			b: queue.NewBreaker(queue.BreakerParams{
-				QueueDepth:      1,
-				MaxConcurrency:  1,
-				InitialCapacity: 1,
+				Concurrency:        1,
+				MaxQueueDepth:      1,
+				InitialCapacity:    1,
+				RateLimitingFactor: rateLimitingFactor,
 			}),
 		}, {
 			dest: "heart-of-gold",
 			b: queue.NewBreaker(queue.BreakerParams{
-				QueueDepth:      1,
-				MaxConcurrency:  1,
-				InitialCapacity: 1,
+				Concurrency:        1,
+				MaxQueueDepth:      1,
+				InitialCapacity:    1,
+				RateLimitingFactor: rateLimitingFactor,
 			}),
 		}}
 

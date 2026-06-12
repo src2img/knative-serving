@@ -73,7 +73,7 @@ func TestQueueTraceSpans(t *testing.T) {
 			serverURL, _ := url.Parse(server.URL)
 
 			proxy := httputil.NewSingleHostReverseProxy(serverURL)
-			params := queue.BreakerParams{QueueDepth: 10, MaxConcurrency: 10, InitialCapacity: 10}
+			params := queue.BreakerParams{Concurrency: 10, MaxQueueDepth: 10, InitialCapacity: 10, RateLimitingFactor: 3}
 			var breaker *queue.Breaker
 			if !tc.infiniteCC {
 				breaker = queue.NewBreaker(params)

@@ -55,6 +55,9 @@ const (
 	// across the entire revision), and for the individual podTracker breakers.
 	breakerQueueDepth = 10000
 
+	// Do not have a smaller queue than 100 entries
+	minBreakerQueueDepth = 100
+
 	// The revisionThrottler breaker's concurrency increases up to this value as
 	// new endpoints show up. We need to set some value here since the breaker
 	// requires an explicit buffer size (it's backed by a chan struct{}), but
@@ -149,7 +152,8 @@ type revisionThrottler struct {
 	backendCount int
 
 	// This is a breaker for the revision as a whole.
-	breaker breaker
+	breaker            breaker
+	rateLimitingFactor float64
 
 	// This will be non-empty when we're able to use pod addressing.
 	podTrackers []*podTracker
@@ -199,6 +203,7 @@ func newRevisionThrottler(revID types.NamespacedName,
 		logger:               logger,
 		protocol:             proto,
 		lbPolicy:             lbp,
+		rateLimitingFactor:   breakerParams.RateLimitingFactor,
 	}
 
 	// Start with unknown
@@ -436,9 +441,11 @@ func (rt *revisionThrottler) handleUpdate(update revisionDestsUpdate) {
 					tracker = newPodTracker(newDest, nil)
 				} else {
 					tracker = newPodTracker(newDest, queue.NewBreaker(queue.BreakerParams{
-						QueueDepth:      breakerQueueDepth,
-						MaxConcurrency:  rt.containerConcurrency,
-						InitialCapacity: rt.containerConcurrency, // Presume full unused capacity.
+						Concurrency:        rt.containerConcurrency,
+						MinQueueDepth:      minBreakerQueueDepth,
+						MaxQueueDepth:      rt.containerConcurrency,
+						InitialCapacity:    rt.containerConcurrency, // Presume full unused capacity.
+						RateLimitingFactor: rt.rateLimitingFactor,
 					}))
 				}
 			}
@@ -459,17 +466,19 @@ type Throttler struct {
 	revisionThrottlersMutex sync.RWMutex
 	revisionLister          servinglisters.RevisionLister
 	ipAddress               string // The IP address of this activator.
+	rateLimitingFactor      float64
 	logger                  *zap.SugaredLogger
 	epsUpdateCh             chan *corev1.Endpoints
 }
 
 // NewThrottler creates a new Throttler
-func NewThrottler(ctx context.Context, ipAddr string) *Throttler {
+func NewThrottler(ctx context.Context, ipAddr string, rateLimitingFactor float64) *Throttler {
 	revisionInformer := revisioninformer.Get(ctx)
 	t := &Throttler{
 		revisionThrottlers: make(map[types.NamespacedName]*revisionThrottler),
 		revisionLister:     revisionInformer.Lister(),
 		ipAddress:          ipAddr,
+		rateLimitingFactor: rateLimitingFactor,
 		logger:             logging.FromContext(ctx),
 		epsUpdateCh:        make(chan *corev1.Endpoints),
 	}
@@ -552,7 +561,8 @@ func (t *Throttler) getOrCreateRevisionThrottler(revID types.NamespacedName) (*r
 			revID,
 			int(rev.Spec.GetContainerConcurrency()),
 			pkgnet.ServicePortName(rev.GetProtocol()),
-			queue.BreakerParams{QueueDepth: breakerQueueDepth, MaxConcurrency: revisionMaxConcurrency},
+			queue.BreakerParams{Concurrency: int(rev.Spec.GetContainerConcurrency()), MinQueueDepth: minBreakerQueueDepth, MaxQueueDepth: revisionMaxConcurrency,
+				RateLimitingFactor: t.rateLimitingFactor},
 			t.logger,
 		)
 		t.revisionThrottlers[revID] = revThrottler

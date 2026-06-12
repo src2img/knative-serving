@@ -19,6 +19,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -31,6 +32,8 @@ const (
 	// semNoChangeTimeout is some additional wait time after a number
 	// of acquires is reached to assert that no more acquires get through.
 	semNoChangeTimeout = 50 * time.Millisecond
+
+	rateLimitingFactor = 3.0
 )
 
 func TestBreakerInvalidConstructor(t *testing.T) {
@@ -38,17 +41,23 @@ func TestBreakerInvalidConstructor(t *testing.T) {
 		name    string
 		options BreakerParams
 	}{{
-		name:    "QueueDepth = 0",
-		options: BreakerParams{QueueDepth: 0, MaxConcurrency: 1, InitialCapacity: 1},
+		name:    "Concurrency = 0",
+		options: BreakerParams{Concurrency: 0, MaxQueueDepth: 1, InitialCapacity: 1},
 	}, {
-		name:    "MaxConcurrency negative",
-		options: BreakerParams{QueueDepth: 1, MaxConcurrency: -1, InitialCapacity: 1},
+		name:    "MaxQueueDepth negative",
+		options: BreakerParams{Concurrency: 1, MaxQueueDepth: -1, InitialCapacity: 1},
 	}, {
 		name:    "InitialCapacity negative",
-		options: BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: -1},
+		options: BreakerParams{Concurrency: 1, MaxQueueDepth: 1, InitialCapacity: -1},
 	}, {
 		name:    "InitialCapacity out-of-bounds",
-		options: BreakerParams{QueueDepth: 1, MaxConcurrency: 5, InitialCapacity: 6},
+		options: BreakerParams{Concurrency: 1, MaxQueueDepth: 5, InitialCapacity: 6},
+	}, {
+		name:    "Rate limiting factor negative",
+		options: BreakerParams{Concurrency: 1, RateLimitingFactor: -1},
+	}, {
+		name:    "MinQueueDepth negative",
+		options: BreakerParams{Concurrency: 1, RateLimitingFactor: 1, MinQueueDepth: -1},
 	}}
 
 	for _, test := range tests {
@@ -65,7 +74,7 @@ func TestBreakerInvalidConstructor(t *testing.T) {
 }
 
 func TestBreakerReserveOverload(t *testing.T) {
-	params := BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 1}
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 1, InitialCapacity: 1, RateLimitingFactor: rateLimitingFactor}
 	b := NewBreaker(params) // Breaker capacity = 2
 	cb1, rr := b.Reserve(context.Background())
 	if !rr {
@@ -87,16 +96,13 @@ func TestBreakerReserveOverload(t *testing.T) {
 
 func TestBreakerOverloadMixed(t *testing.T) {
 	// This tests when reservation and maybe are intermised.
-	params := BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 1}
-	b := NewBreaker(params) // Breaker capacity = 2
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 1, InitialCapacity: 1, RateLimitingFactor: rateLimitingFactor}
+	b := NewBreaker(params) // Breaker capacity = 1
 	reqs := newRequestor(b)
 
 	// Bring breaker to capacity.
-	reqs.request()
-	// This happens in go-routine, so spin.
-	for _, in := unpack(b.sem.state.Load()); in != 1; _, in = unpack(b.sem.state.Load()) {
-		time.Sleep(time.Millisecond * 2)
-	}
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
+
 	_, rr := b.Reserve(context.Background())
 	if rr {
 		t.Fatal("Reserve was an unexpected success.")
@@ -113,13 +119,30 @@ func TestBreakerOverloadMixed(t *testing.T) {
 }
 
 func TestBreakerOverload(t *testing.T) {
-	params := BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 1}
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 1, InitialCapacity: 1, RateLimitingFactor: rateLimitingFactor}
+	b := NewBreaker(params) // Breaker capacity = 1
+	reqs := newRequestor(b)
+
+	// Bring breaker to capacity.
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
+
+	// Overshoot by one.
+	reqs.request()
+	reqs.expectFailure(t)
+
+	// The remainder should succeed.
+	reqs.processSuccessfully(t)
+}
+
+func TestBreakerOverloadDueToRateLimiting(t *testing.T) {
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 10000000, InitialCapacity: 1, RateLimitingFactor: 1.0}
 	b := NewBreaker(params) // Breaker capacity = 2
 	reqs := newRequestor(b)
 
 	// Bring breaker to capacity.
-	reqs.request()
-	reqs.request()
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
+	// queue one
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
 
 	// Overshoot by one.
 	reqs.request()
@@ -130,14 +153,35 @@ func TestBreakerOverload(t *testing.T) {
 	reqs.processSuccessfully(t)
 }
 
+func TestBreakerNoOverloadDueToRateLimiting(t *testing.T) {
+	params := BreakerParams{Concurrency: 1, MinQueueDepth: 3, MaxQueueDepth: 10000000, InitialCapacity: 1, RateLimitingFactor: 1.0}
+	b := NewBreaker(params) // Breaker capacity = 3
+	reqs := newRequestor(b)
+
+	// Bring breaker to capacity.
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
+	// queue two
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
+
+	// Overshoot by one.
+	reqs.request()
+	reqs.expectFailure(t)
+
+	// The remainder should succeed.
+	reqs.processSuccessfully(t)
+	reqs.processSuccessfully(t)
+	reqs.processSuccessfully(t)
+}
+
 func TestBreakerQueueing(t *testing.T) {
-	params := BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 0}
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 2, InitialCapacity: 0, RateLimitingFactor: rateLimitingFactor}
 	b := NewBreaker(params) // Breaker capacity = 2
 	reqs := newRequestor(b)
 
 	// Bring breaker to capacity. Doesn't error because queue subsumes these requests.
-	reqs.request()
-	reqs.request()
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 0)
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 0)
 
 	// Update concurrency to allow the requests to be processed.
 	b.UpdateConcurrency(1)
@@ -148,13 +192,14 @@ func TestBreakerQueueing(t *testing.T) {
 }
 
 func TestBreakerNoOverload(t *testing.T) {
-	params := BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 1}
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 2, InitialCapacity: 1, RateLimitingFactor: rateLimitingFactor}
 	b := NewBreaker(params) // Breaker capacity = 2
 	reqs := newRequestor(b)
 
 	// Bring request to capacity.
-	reqs.request()
-	reqs.request()
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
+	// queue one
+	reqs.requestAndWaitVerifyInflight(&b.sem.state, 1)
 
 	// Process one, send a new one in, at capacity again.
 	reqs.processSuccessfully(t)
@@ -170,7 +215,7 @@ func TestBreakerNoOverload(t *testing.T) {
 }
 
 func TestBreakerCancel(t *testing.T) {
-	params := BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 0}
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 1, InitialCapacity: 0, RateLimitingFactor: 5}
 	b := NewBreaker(params)
 	reqs := newRequestor(b)
 
@@ -209,7 +254,7 @@ func TestBreakerCancel(t *testing.T) {
 }
 
 func TestBreakerUpdateConcurrency(t *testing.T) {
-	params := BreakerParams{QueueDepth: 1, MaxConcurrency: 1, InitialCapacity: 0}
+	params := BreakerParams{Concurrency: 1, MaxQueueDepth: 1, InitialCapacity: 0, RateLimitingFactor: rateLimitingFactor}
 	b := NewBreaker(params)
 	b.UpdateConcurrency(1)
 	if got, want := b.Capacity(), 1; got != want {
@@ -343,6 +388,14 @@ func (r *requestor) request() {
 	r.requestWithContext(context.Background())
 }
 
+func (r *requestor) requestAndWaitVerifyInflight(inflight *atomic.Uint64, expectedInflight uint64) {
+	r.request()
+	// This happens in go-routine, so spin.
+	for _, in := unpack(inflight.Load()); in != expectedInflight; _, in = unpack(inflight.Load()) {
+		time.Sleep(time.Millisecond * 2)
+	}
+}
+
 // requestWithContext simulates a request in a separate goroutine. The
 // request will either fail immediately (as observable via expectFailure)
 // or block until processSuccessfully is called.
@@ -377,7 +430,7 @@ func BenchmarkBreakerMaybe(b *testing.B) {
 	op := func() {}
 
 	for _, c := range []int{1, 10, 100, 1000} {
-		breaker := NewBreaker(BreakerParams{QueueDepth: 10000000, MaxConcurrency: c, InitialCapacity: c})
+		breaker := NewBreaker(BreakerParams{Concurrency: 10000000, MaxQueueDepth: c, InitialCapacity: c, RateLimitingFactor: rateLimitingFactor})
 
 		b.Run(fmt.Sprintf("%d-sequential", c), func(b *testing.B) {
 			for range b.N {
@@ -397,7 +450,7 @@ func BenchmarkBreakerMaybe(b *testing.B) {
 
 func BenchmarkBreakerReserve(b *testing.B) {
 	op := func() {}
-	breaker := NewBreaker(BreakerParams{QueueDepth: 1, MaxConcurrency: 10000000, InitialCapacity: 10000000})
+	breaker := NewBreaker(BreakerParams{Concurrency: 1, MaxQueueDepth: 10000000, InitialCapacity: 10000000, RateLimitingFactor: rateLimitingFactor})
 
 	b.Run("sequential", func(b *testing.B) {
 		for range b.N {

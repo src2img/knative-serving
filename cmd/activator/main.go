@@ -78,6 +78,8 @@ type config struct {
 	PodName string `split_words:"true" required:"true"`
 	PodIP   string `split_words:"true" required:"true"`
 
+	RateLimitingFactor float64 `split_words:"true" default:"0.0"`
+
 	// These are here to allow configuring higher values of keep-alive for larger environments.
 	// TODO: run loadtests using these flags to determine optimal default values.
 	MaxIdleProxyConns        int `split_words:"true" default:"1000"`
@@ -154,6 +156,7 @@ func main() {
 	}
 
 	logger.Info("Starting the knative activator")
+	logger.Infow("Using rate-limiting throttler", "rate-limit", env.RateLimitingFactor)
 
 	// Create the transport used by both the activator->QP probe and the proxy.
 	// It's important that the throttler and the activatorhandler share this
@@ -203,7 +206,7 @@ func main() {
 	activatornet.SetProbeSettings(probeTimeout, probeFrequency)
 
 	// Start throttler.
-	throttler := activatornet.NewThrottler(ctx, env.PodIP)
+	throttler := activatornet.NewThrottler(ctx, env.PodIP, env.RateLimitingFactor)
 	go throttler.Run(ctx, transport, networkConfig.EnableMeshPodAddressability, networkConfig.MeshCompatibilityMode)
 
 	// Set up our config store
