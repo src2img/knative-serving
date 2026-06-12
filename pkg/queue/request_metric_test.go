@@ -46,7 +46,7 @@ func TestAppRequestMetricsHandlerPanickingHandler(t *testing.T) {
 		fakeClock.SetTime(fakeClock.Now().Add(time.Second))
 		panic("no!")
 	})
-	breaker := NewBreaker(BreakerParams{QueueDepth: 10, MaxConcurrency: 10, InitialCapacity: 10})
+	breaker := NewBreaker(BreakerParams{Concurrency: 10, MaxQueueDepth: 10, InitialCapacity: 10, RateLimitingFactor: 3})
 
 	// Increment the breaker to report 1 active request
 	breaker.tryAcquirePending()
@@ -81,7 +81,7 @@ func TestAppRequestMetricsHandler(t *testing.T) {
 	baseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fakeClock.SetTime(fakeClock.Now().Add(time.Second))
 	})
-	breaker := NewBreaker(BreakerParams{QueueDepth: 10, MaxConcurrency: 10, InitialCapacity: 10})
+	breaker := NewBreaker(BreakerParams{Concurrency: 10, MaxQueueDepth: 10, InitialCapacity: 10, RateLimitingFactor: 3})
 	breaker.tryAcquirePending()
 	handler, err := NewAppRequestMetricsHandler(mp, baseHandler, breaker)
 	if err != nil {
@@ -152,7 +152,7 @@ func BenchmarkAppRequestMetricsHandler(b *testing.B) {
 	mp := metric.NewMeterProvider(metric.WithReader(reader))
 
 	baseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	breaker := NewBreaker(BreakerParams{QueueDepth: 10, MaxConcurrency: 10, InitialCapacity: 10})
+	breaker := NewBreaker(BreakerParams{Concurrency: 10, MaxQueueDepth: 10, InitialCapacity: 10, RateLimitingFactor: 3})
 	handler, err := NewAppRequestMetricsHandler(mp, baseHandler, breaker)
 	if err != nil {
 		b.Fatal("Failed to create handler:", err)
