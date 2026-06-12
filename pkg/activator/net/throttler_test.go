@@ -48,10 +48,13 @@ import (
 	"knative.dev/serving/pkg/queue"
 )
 
+const rateLimitingFactor = 3.0
+
 var testBreakerParams = queue.BreakerParams{
-	QueueDepth:      1,
-	MaxConcurrency:  revisionMaxConcurrency,
-	InitialCapacity: 0,
+	Concurrency:        1,
+	MaxQueueDepth:      revisionMaxConcurrency,
+	InitialCapacity:    0,
+	RateLimitingFactor: rateLimitingFactor,
 }
 
 type tryResult struct {
@@ -60,7 +63,7 @@ type tryResult struct {
 }
 
 func newTestThrottler(ctx context.Context) *Throttler {
-	return NewThrottler(ctx, "10.10.10.10")
+	return NewThrottler(ctx, "10.10.10.10", rateLimitingFactor)
 }
 
 func TestThrottlerUpdateCapacity(t *testing.T) {
@@ -280,9 +283,10 @@ func makeTrackers(num, cc int) []*podTracker {
 		x[i] = newPodTracker(strconv.Itoa(i), nil)
 		if cc > 0 {
 			x[i].b = queue.NewBreaker(queue.BreakerParams{
-				QueueDepth:      1,
-				MaxConcurrency:  cc,
-				InitialCapacity: cc,
+				Concurrency:        1,
+				MaxQueueDepth:      cc,
+				InitialCapacity:    cc,
+				RateLimitingFactor: rateLimitingFactor,
 			})
 		}
 	}
@@ -509,7 +513,7 @@ func TestThrottlerSuccesses(t *testing.T) {
 
 			updateCh := make(chan revisionDestsUpdate)
 
-			throttler := NewThrottler(ctx, "130.0.0.2")
+			throttler := NewThrottler(ctx, "130.0.0.2", rateLimitingFactor)
 			var grp errgroup.Group
 			grp.Go(func() error { throttler.run(updateCh); return nil })
 			// Ensure the throttler stopped before we leave the test, so that
@@ -729,7 +733,7 @@ func TestActivatorsIndexUpdate(t *testing.T) {
 
 	updateCh := make(chan revisionDestsUpdate)
 
-	throttler := NewThrottler(ctx, "130.0.0.2")
+	throttler := NewThrottler(ctx, "130.0.0.2", rateLimitingFactor)
 	var grp errgroup.Group
 	grp.Go(func() error { throttler.run(updateCh); return nil })
 	// Ensure the throttler stopped before we leave the test, so that
@@ -824,7 +828,7 @@ func TestMultipleActivators(t *testing.T) {
 
 	updateCh := make(chan revisionDestsUpdate)
 
-	throttler := NewThrottler(ctx, "130.0.0.2")
+	throttler := NewThrottler(ctx, "130.0.0.2", rateLimitingFactor)
 	var grp errgroup.Group
 	grp.Go(func() error { throttler.run(updateCh); return nil })
 	// Ensure the throttler stopped before we leave the test, so that
