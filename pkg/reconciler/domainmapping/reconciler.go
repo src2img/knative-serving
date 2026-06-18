@@ -83,6 +83,12 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, dm *v1beta1.DomainMappin
 	defer cancel()
 
 	logger := logging.FromContext(ctx)
+
+	if len(dm.Annotations["codeengine.cloud.ibm.com/disabled"]) > 0 {
+		logger.Debugf("DomainMapping %s/%s is disabled", dm.Namespace, dm.Name)
+		return r.disableDomainMapping(ctx, dm)
+	}
+
 	logger.Debugf("Reconciling DomainMapping %s/%s", dm.Namespace, dm.Name)
 
 	// Defensively assume the ingress is not configured until we manage to
