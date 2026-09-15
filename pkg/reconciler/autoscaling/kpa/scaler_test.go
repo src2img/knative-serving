@@ -255,6 +255,18 @@ func TestScaler(t *testing.T) {
 			markSKSInProxyFor(s, gracePeriod)
 		},
 	}, {
+		label:         "fails to activate in time and stays at min-scale instead of scaling down (and up again due to min-scale)",
+		startReplicas: 1,
+		minScale:      1,
+		scaleTo:       0,
+		wantReplicas:  1,
+		wantScaling:   false,
+		paMutation: func(k *autoscalingv1alpha1.PodAutoscaler) {
+			k.Status.MarkScaleTargetInitialized()
+			paMarkActivating(k, time.Now().Add(-(activationTimeout + time.Second)))
+			WithReachabilityUnreachable(k)
+		},
+	}, {
 		label:         "waits to scale to zero (just before grace period, sks in proxy long)",
 		startReplicas: 1,
 		scaleTo:       0,

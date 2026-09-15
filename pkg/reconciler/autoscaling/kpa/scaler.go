@@ -204,10 +204,15 @@ func (ks *scaler) handleScaleToZero(ctx context.Context, pa *autoscalingv1alpha1
 	logger := logging.FromContext(ctx)
 	switch {
 	case pa.Status.IsActivating(): // Active=Unknown
-		// If we are stuck activating for longer than our progress deadline, presume we cannot succeed and scale to 0.
+		// If we are stuck activating for longer than our progress deadline, presume we cannot succeed and scale to 0 or to min-scale if our scale target was initialized once.
 		if pa.Status.CanFailActivation(now, activationTimeout) {
-			logger.Info("Activation has timed out after ", activationTimeout)
-			return desiredScale, true
+			minScale := pa.MinScale(cfgAS)
+			if minScale == 0 || !pa.Status.IsScaleTargetInitialized() {
+				logger.Info("Activation has timed out after ", activationTimeout)
+				return desiredScale, true
+			}
+			logger.Infof("Activation has timed out after %v. Scaling down to min-scale: %d", activationTimeout, minScale)
+			return minScale, true
 		}
 		ks.enqueueCB(pa, activationTimeout)
 		return scaleUnknown, false
