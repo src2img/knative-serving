@@ -210,7 +210,21 @@ func makePodSpec(rev *v1.Revision, cfg *config.Config) (*corev1.PodSpec, error) 
 		extraVolumes = append(extraVolumes, certVolume(networking.ServingCertName))
 	}
 
-	podSpec := BuildPodSpec(rev, append(BuildUserContainers(rev, cfg.Features), *queueContainer), cfg)
+	containers := BuildUserContainers(rev, cfg.Features)
+
+	if IsOIDCAuthenticationEnabled(rev) {
+		oauth2ProxyContainer, err := MakeOauth2ProxyContainer(rev, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create ce-oauth2-proxy container: %w", err)
+		}
+		rewriteQueueProxyUserPort(queueContainer, oauth2ProxyContainer.Ports[0].ContainerPort)
+		// Insert oauth2-proxy before queue-proxy: [user containers..., ce-oauth2-proxy, queue-proxy]
+		containers = append(containers, oauth2ProxyContainer)
+	}
+
+	containers = append(containers, *queueContainer)
+
+	podSpec := BuildPodSpec(rev, containers, cfg)
 	podSpec.Volumes = append(podSpec.Volumes, extraVolumes...)
 
 	if val := cfg.Deployment.PodRuntimeClassName(rev.ObjectMeta.Labels); podSpec.RuntimeClassName == nil {

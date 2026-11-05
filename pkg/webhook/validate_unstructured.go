@@ -29,6 +29,9 @@ import (
 
 // ValidateService runs extra validation on Service resources
 func ValidateService(ctx context.Context, uns *unstructured.Unstructured) error {
+	if err := validateOauth2ProxyConfigSecret(ctx, uns); err != nil {
+		return err
+	}
 	return validateRevisionTemplate(ctx, uns)
 }
 
@@ -39,6 +42,9 @@ func ValidateConfiguration(ctx context.Context, uns *unstructured.Unstructured) 
 		return nil
 	}
 
+	if err := validateOauth2ProxyConfigSecret(ctx, uns); err != nil {
+		return err
+	}
 	return validateRevisionTemplate(ctx, uns)
 }
 

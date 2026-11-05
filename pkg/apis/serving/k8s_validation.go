@@ -49,6 +49,7 @@ var (
 
 	reservedContainerNames = sets.New(
 		"queue-proxy",
+		"ce-oauth2-proxy",
 	)
 
 	reservedEnvVars = sets.New(
